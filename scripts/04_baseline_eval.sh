@@ -6,7 +6,7 @@
 #         本地统一用 val 切分作为前后对比协议, 保证内部一致性。
 set -euo pipefail
 
-REPRO=/data/repro
+REPRO=/root/rivermind-data/repro
 AI4RS=$REPRO/ai4rs
 WEIGHTS=$REPRO/weights
 RUN=${1:-r18}

@@ -6,15 +6,26 @@
 
 - 连接：`ssh root@sx01-ssh.gpuhome.cc -p 30214 -i D:\tmp\001\.ssh\yolo-sx01`
 - 硬件：1× RTX 3090 24GB、88 核、251GB RAM
-- 磁盘：`/` 剩余约 12GB（小！）；`/data` 剩余约 355GB（所有大文件放这里）
+- 磁盘（关键约束）：
+  - `/`（overlay）30G 仅剩 12G —— 不放大数据
+  - `/data/tini` 是**只读文件挂载**（1007G 卷但 ro，且是文件不是目录）——不可用
+  - **唯一可写大分区：`/root/rivermind-data`（49G，可用 31G，rw）** —— 所有大文件放这里
+  - 策略：**流式处理**——下载一个 tar → 解压 → 切分（jpg 补丁）→ 删除原始图与 tar，峰值 <25G
 - 网络：✅ pypi.org / modelscope.cn / hf-mirror.com / pypi.tuna.tsinghua.edu.cn / pan.baidu.com；❌ github.com / drive.google.com / kaggle.com
-- 系统：Python 3.12.13（/opt/conda）、torch 2.12.1+cu130（base 环境）、nvcc 13.0、git 2.34
+- 系统：Python 3.12.13（/opt/conda）、torch 2.12.1+cu130（base）、nvcc 13.0、git 2.34
 - 目录约定（全新开始，不碰 /workspace 旧代码）：
-  - `/data/repro` —— 工作根（代码 + 脚本 + 日志 + 权重）
-  - `/data/repro/ai4rs` —— 框架源码（本机打包 scp 上传）
-  - `/data/repro/data` —— 数据集（DOTA 原始 + 切分）
-  - `/data/conda_envs/ai4rs` —— 独立 conda 环境（py3.10，按官方要求）
-  - `/data/repro/experiments` —— 训练/评测输出
+  - `/root/rivermind-data/repro` —— 工作根（代码/脚本/数据/权重/实验）
+  - `/root/rivermind-data/repro/ai4rs` —— 框架源码（本机打包 scp 上传）
+  - `/root/rivermind-data/repro/envs/ai4rs` —— conda 环境（`conda create -p`）
+  - `/root/rivermind-data/repro/data/split_ss_dota/{train,val}` —— **jpg** 补丁 + annfiles + coco json
+  - `/root/rivermind-data/repro/experiments` —— 训练/评测输出
+
+## 本地评测协议（重要，防泄漏且可复现）
+
+- DOTA **test 无公开标注**（论文数字走官方评测服务器）→ 本地统一协议：
+  - **训练 = DOTA train 切分；评测 = DOTA val 切分**（无泄漏、公平、可复现）
+  - 官方权重在 val 上的指标仅作为"框架跑通/数量级 sanity check"参考，不作为正式对比基线
+  - 正式对比基线 = 本地用同协议（train 训练 / val 评测）重训的 O2-RTDETR
 
 ## 1. 环境安装（脚本 01）
 
@@ -29,9 +40,9 @@
 
 | 步骤 | 操作 | 预期 |
 | --- | --- | --- |
-| 权重 | `scripts/02_fetch_baseline_weights.sh`：ModelScope 下载 `o2_rtdetr_r18vd_2xb4_72e_dota/epoch_72.pth`（及 R50 备用） | ~1 个权重文件（数百 MB） |
-| 数据 | `scripts/03_prep_dota.sh`：DOTA-v1.0 原始图 → 切 1024×1024/overlap 200 → `dota2coco.py` | `split_ss_dota/{trainval,test}` + json |
-| 评测 | `scripts/04_baseline_eval.sh`：`python tools/test.py .../o2_rtdetr_r18vd_2xb4_72e_dota.py <ckpt>`（单卡） | **AP50 ≈ 77.31**（若与官方一致 → 复现成功，基线确立） |
+| 权重 | `scripts/02_fetch_baseline_weights.sh`：ModelScope 下载 `o2_rtdetr_r18vd_2xb4_72e_dota/epoch_72.pth`（及 R50 备用） | ~1 个权重文件（数百 MB），实测 ModelScope 直链匿名可下（HTTP 200） |
+| 数据 | `scripts/03_prep_dota.sh val`：DOTA-v1.0 val 经 hf-mirror 下载 → 切 1024×1024/overlap 200（**jpg**）→ `dota2coco.py` | `split_ss_dota/val/`（images+annfiles）+ val.json，峰值 <25G |
+| 评测 | `scripts/04_baseline_eval.sh r18 val`：`python tools/test.py` + 官方权重 @ val 切分 | sanity check 指标（框架跑通即可，正式对比用本地重训基线） |
 
 - 若 DOTA 官方下载源不可达：备选 Baidu 网盘官方链接（服务器可达 baidu）或 HF 镜像（hf-mirror 可达）；下载后校验文件数/大小。
 - 权重 URL 需要验证 ModelScope 是否要求登录（若 401/403，改用 `modelscope` CLI 下载并记录登录方式；必要时在后续轮次处理）。
@@ -49,22 +60,18 @@
 
 ### 实验矩阵（一次排好，统一跑，避免局部反复）
 
-> 训练协议固定（72e、单卡 bs=2~4、1024×1024、ss），只改变量。训练用 `python tools/train.py <cfg>`（单卡适配 config 的 `batch_size/num_gpus` 字段即可）。
+> 训练协议固定（72e、单卡 bs=2~4、1024×1024、**train 训练 / val 评测**），只改变量。训练用 `python tools/train.py <cfg>`（单卡适配 config 的 `batch_size/num_gpus` 字段即可）。
 
 | # | 配置 | 目的 | 状态 |
 | --- | --- | --- | --- |
-| E0 | O2-RTDETR-R18（官方权重，不训练） | 复现基线 | 待跑 |
-| E1 | O2-RTDETR-R18 + FS-FPN（训练） | 主创新 vs 复现值 | 待跑 |
+| E0 | O2-RTDETR-R18（官方权重 @ val，不训练） | sanity check（框架跑通） | 待跑 |
+| E0' | O2-RTDETR-R18（本地重训：train→val） | **正式基线**（公平对比） | 待跑 |
+| E1 | O2-RTDETR-R18 + FS-FPN（训练） | 主创新 vs E0' | 待跑 |
 | E2 | E1 + FAA 角度对齐 | 组合增益（角度+频域） | 待跑 |
 | E3 | E1 + DEIM 匹配 | 组合增益（匹配+频域） | 待跑（可选） |
 | E4 | 最优组合 R34/R50 backbone | 规模提升 | 待跑（可选） |
 
-评测协议：DOTA-v1.0 **测试集** AP50（官方基线 77.31@R18），随后推广 DOTA-v1.5（70.83@R18）与 DIOR-R（67.00@R18）。
-
-### 积极增益判据
-
-- 主创新（E1）相对 E0 官方权重的测试集 AP50 提升 ≥ +0.5（且同训练协议下与官方数值可比）；若提升不显著，则以 E2/E3 组合寻找增益，不做单点无限调参。
-- 三个以上通用性试验（DOTA-v1.0 / 1.5 / DIOR-R）都有正增益 → 论文结论成立。
+评测协议：DOTA-v1.0 **val 切分** AP50（本地统一）；论文数字（77.31@R18 等）来自 DOTA 官方 test 服务器，仅作为参考量级。积极增益判据：E1 相对 **E0'** 的 val AP50 提升 ≥ +0.5 且同协议可比；若提升不显著，则以 E2/E3 组合寻找增益，不做单点无限调参。随后推广 DOTA-v1.5 与 DIOR-R 验证通用性。
 
 ## 4. 实验管理（防局部陷阱）
 

@@ -52,21 +52,22 @@ RemoteSensing--001/
 ## 云端环境（GPU 服务器）
 
 - `ssh root@sx01-ssh.gpuhome.cc -p 30214 -i D:\tmp\001\.ssh\yolo-sx01`
-- 1× RTX 3090 24GB / 88 核 / 251GB RAM；`/data` 剩余约 355GB（数据与虚拟环境都放 `/data`）
-- 服务器**无法访问 github.com**（pypi / modelscope / hf-mirror / tsinghua / baidu 可达）→ 代码通过本机打包 scp 上传（见 [docs/experiment_plan.md](docs/experiment_plan.md)），权重走 ModelScope，数据走 Baidu/HF 镜像
-- 本机**不下载数据集与模型权重**，全部在服务器上完成
+- 1× RTX 3090 24GB / 88 核 / 251GB RAM
+- **磁盘**：唯一可写大分区 `/root/rivermind-data`（49G，可用 31G）→ 工作根 `/root/rivermind-data/repro`；数据流式处理（下载→切分→删原始，峰值 <25G）
+- **网络**：服务器**无法访问 github.com**（pypi / modelscope / hf-mirror / tsinghua / baidu 可达）→ 代码经本机打包 scp 上传；权重走 ModelScope；数据走 hf-mirror / Baidu
+- **本机不下载任何数据集或模型权重**（只在服务器上下载/存储）
 
 ## 快速开始（服务器）
 
 ```bash
 # 1) 环境
-bash /data/repro/scripts/01_env_setup.sh 2>&1 | tee /data/repro/logs/env_setup.log
+bash /root/rivermind-data/repro/scripts/01_env_setup.sh 2>&1 | tee /root/rivermind-data/repro/logs/env_setup.log
 # 2) 基线权重
-bash /data/repro/scripts/02_fetch_baseline_weights.sh
-# 3) 数据
-bash /data/repro/scripts/03_prep_dota.sh
-# 4) 基线评测
-bash /data/repro/scripts/04_baseline_eval.sh
+bash /root/rivermind-data/repro/scripts/02_fetch_baseline_weights.sh
+# 3) 数据（先 val 做评测，训练时再切 train）
+bash /root/rivermind-data/repro/scripts/03_prep_dota.sh val
+# 4) 基线评测（sanity check，正式基线为本地重训）
+bash /root/rivermind-data/repro/scripts/04_baseline_eval.sh r18 val
 ```
 
 ## 里程碑

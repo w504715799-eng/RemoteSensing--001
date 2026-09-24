@@ -4,7 +4,7 @@
 #   variant: r18 (默认) | r34 | r50   —— 对应 DOTA-v1.0 单尺度官方权重
 set -euo pipefail
 
-REPRO=/data/repro
+REPRO=/root/rivermind-data/repro
 WEIGHTS=$REPRO/weights
 mkdir -p "$WEIGHTS"
 

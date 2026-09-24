@@ -6,7 +6,7 @@
 #   - 数据根: data/split_ss_dota (trainval/val)
 set -euo pipefail
 
-REPRO=/data/repro
+REPRO=/root/rivermind-data/repro
 AI4RS=$REPRO/ai4rs
 CFG=${1:?config 路径必填}
 RUN=${2:?run_name 必填}

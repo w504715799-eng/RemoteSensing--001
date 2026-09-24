@@ -1,66 +1,54 @@
 #!/usr/bin/env bash
-# 03_prep_dota.sh — DOTA-v1.0: 下载(hf-mirror) -> 整理目录 -> 切 1024x1024 -> COCO 转换
-# 用法: bash scripts/03_prep_dota.sh
-# 数据源: HF 数据集 isaaccorley/dota (CC-BY-NC-4.0, 研究用途), 经 hf-mirror.com 可达
+# 03_prep_dota.sh — DOTA-v1.0 数据流式准备(磁盘受限版):
+#   下载 -> 解压 -> 切 1024x1024(jpg) -> 删除解压原始图与压缩包, 只保留补丁
+# 用法: bash scripts/03_prep_dota.sh [val|train|all]
+#   val   (默认): 只处理 val (第2轮基线评测需要)
+#   train: 只处理 train (训练用)
+#   all  : 两者都处理
+#
+# 数据源: HF isaaccorley/dota (CC-BY-NC-4.0, 研究用途), 经 hf-mirror.com 可达(服务器实测)
+# 协议:   本地训练=train，评测=val（无标注泄漏）；官方 test 无公开标注, 论文数字走官方评测服务器
+# 磁盘:   流式处理, 任意时刻峰值 < 25G (rivermind 可用 31G)
 set -euo pipefail
 
-REPRO=/data/repro
+REPRO=/root/rivermind-data/repro
 AI4RS=$REPRO/ai4rs
 DATA=$REPRO/data
-RAW=$DATA/DOTA
-SPLIT=$DATA/split_ss_dota
+RAW=$DATA/DOTA            # 临时: 解压后的原始图(处理完即删)
+SPLIT=$DATA/split_ss_dota # 持久: jpg 补丁 + annfiles
 HFD=https://hf-mirror.com/datasets/isaaccorley/dota/resolve/main
+EXT=.jpg                  # img_split.py 支持 ./jpg (官方默认 png, 用 jpg 省 ~60% 磁盘)
 
+MODE=${1:-val}
 cd "$AI4RS"
-mkdir -p "$RAW/train" "$RAW/val" "$SPLIT"
 
-echo "==> [1/4] 下载 DOTA-v1.0 (train/val 图像+标注, 共约 13.7GB)"
-for f in \
-  dotav1.0_images_train.tar.gz \
-  dotav1.0_images_val.tar.gz \
-  dotav1.0_annotations_train.tar.gz \
-  dotav1.0_annotations_val.tar.gz; do
-  if [ ! -f "$DATA/$f" ]; then
-    echo "  下载 $f ..."
-    curl -fL --retry 3 -C - -o "$DATA/$f" "$HFD/$f"
+split_subset () {  # $1=子集名(train|val) $2=tar列表
+  local subset=$1; shift
+  local SL=$SPLIT/$subset
+  if [ -d "$SL/images" ] && [ -n "$(ls -A "$SL/images" 2>/dev/null)" ]; then
+    echo "==> $subset 已切分完成, 跳过"; return
   fi
-done
+  echo "==> 下载 $subset 图像/标注包"
+  for f in "$@"; do
+    [ -f "$DATA/$f" ] || curl -fL --retry 3 -C - -o "$DATA/$f" "$HFD/$f"
+  done
+  echo "==> 解压 $subset 到 $RAW/$subset (临时)"
+  local D=$RAW/$subset
+  mkdir -p "$D/images" "$D/labelTxt"
+  for f in "$@"; do
+    case "$f" in
+      *_images_*) tar -xzf "$DATA/$f" -C "$D/images";;
+      *_annotations_*) tar -xzf "$DATA/$f" -C "$D/labelTxt";;
+    esac
+  done
+  echo "    images=$(ls "$D/images" | wc -l) labels=$(ls "$D/labelTxt" | wc -l)"
 
-echo "==> [2/4] 解压并整理为 data/DOTA/{train,val}/{images,labelTxt}"
-# tar 包内部结构: images/<name>.png 与 labelTxt/<name>.txt
-for f in "$DATA"/dotav1.0_images_*.tar.gz; do
-  case "$f" in
-    *train*) D="$RAW/train";;
-    *val*)   D="$RAW/val";;
-  esac
-  if [ ! -d "$D/images" ]; then
-    echo "  解压 $f -> $D/images"; mkdir -p "$D/images"; tar -xzf "$f" -C "$D/images"
-  fi
-done
-for f in "$DATA"/dotav1.0_annotations_*.tar.gz; do
-  case "$f" in
-    *train*) D="$RAW/train";;
-    *val*)   D="$RAW/val";;
-  esac
-  if [ ! -d "$D/labelTxt" ]; then
-    echo "  解压 $f -> $D/labelTxt"; mkdir -p "$D/labelTxt"; tar -xzf "$f" -C "$D/labelTxt"
-  fi
-done
-echo "  图像数量: train=$(ls "$RAW/train/images" | wc -l) val=$(ls "$RAW/val/images" | wc -l)"
-echo "  标注数量: train=$(ls "$RAW/train/labelTxt" | wc -l) val=$(ls "$RAW/val/labelTxt" | wc -l)"
-
-echo "==> [3/4] 切分 1024x1024/overlap200 (trainval 用于训练, val 用于本地评测)"
-if [ ! -d "$SPLIT/trainval/images" ]; then
-  python tools/data/dota/split/img_split.py --base-json \
-    tools/data/dota/split/split_configs/ss_trainval.json
-fi
-if [ ! -d "$SPLIT/val/images" ]; then
-  # 自定义 val 切分配置(与 ss_trainval 同参数, 只切 val 并在本地评测)
-  cat > "$DATA/ss_val.json" <<'JSON'
+  echo "==> 切分 $subset -> $SL (1024x1024, gap 200, jpg)"
+  cat > "$DATA/split_${subset}.json" <<JSON
 {
-  "nproc": 10,
-  "img_dirs": ["data/DOTA/val/images/"],
-  "ann_dirs": ["data/DOTA/val/labelTxt/"],
+  "nproc": 32,
+  "img_dirs": ["$RAW/$subset/images/"],
+  "ann_dirs": ["$RAW/$subset/labelTxt/"],
   "sizes": [1024],
   "gaps": [200],
   "rates": [1.0],
@@ -68,16 +56,49 @@ if [ ! -d "$SPLIT/val/images" ]; then
   "iof_thr": 0.7,
   "no_padding": false,
   "padding_value": [104, 116, 124],
-  "save_dir": "data/split_ss_dota/val/",
-  "save_ext": ".png"
+  "save_dir": "$SL/",
+  "save_ext": "$EXT"
 }
 JSON
-  python tools/data/dota/split/img_split.py --base-json "$DATA/ss_val.json"
-fi
+  python tools/data/dota/split/img_split.py --base-json "$DATA/split_${subset}.json"
 
-echo "==> [4/4] DOTA txt -> COCO json"
-python tools/data/dota/dota2coco.py data/split_ss_dota/trainval data/split_ss_dota/trainval.json
-python tools/data/dota/dota2coco.py data/split_ss_dota/val data/split_ss_dota/val.json
+  echo "==> 回收空间: 删除 $subset 原始图与压缩包(只留补丁)"
+  rm -rf "$D"
+  for f in "$@"; do rm -f "$DATA/$f"; done
+  echo "    $subset 补丁: $(ls "$SL/images" | wc -l) 张"
+  df -h "$REPRO" | tail -1
+}
 
-echo "DONE."
-du -sh "$SPLIT"
+case "$MODE" in
+  val)
+    split_subset val \
+      dotav1.0_images_val.tar.gz \
+      dotav1.0_annotations_val.tar.gz
+    ;;
+  train)
+    split_subset train \
+      dotav1.0_images_train.tar.gz \
+      dotav1.0_annotations_train.tar.gz
+    ;;
+  all)
+    split_subset val \
+      dotav1.0_images_val.tar.gz \
+      dotav1.0_annotations_val.tar.gz
+    split_subset train \
+      dotav1.0_images_train.tar.gz \
+      dotav1.0_annotations_train.tar.gz
+    ;;
+  *) echo "unknown mode: $MODE"; exit 1;;
+esac
+
+echo "==> 生成 COCO 标注 json"
+for s in "$MODE"; do
+  [ "$s" = "all" ] && for s2 in train val; do
+    [ -d "$SPLIT/$s2/images" ] && python tools/data/dota/dota2coco.py \
+      "$SPLIT/$s2" "$SPLIT/$s2.json"
+  done && continue
+  [ -d "$SPLIT/$s/images" ] && python tools/data/dota/dota2coco.py \
+    "$SPLIT/$s" "$SPLIT/$s.json"
+done
+
+echo "DONE. 持久占用:"; du -sh "$SPLIT" 2>/dev/null || du -sh "$SPLIT"/* 2>/dev/null
