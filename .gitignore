@@ -1,0 +1,24 @@
+# 数据集与权重(一律放服务器, 本机不下载)
+data/
+weights/
+*.pth
+*.pt
+*.onnx
+*.tar.gz
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 实验输出(仅保留文本摘要, 大文件不入库)
+experiments/*/preds.pkl
+experiments/**/work_dirs/
+work_dirs/
+
+# 上传打包
+ai4rs.tar.gz
+*.log.html
+.DS_Store
