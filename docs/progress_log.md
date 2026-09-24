@@ -18,6 +18,12 @@
 5. GitHub 仓库初始化并推送：
    - 本机 git push 依赖 msys sh，被沙箱命名管道限制阻断 → 以 `danger-full-access` 重试成功；已用现有 SSH 公钥作为**写入 deploy key**（`dsh-push-20260924`）并持久化 `core.sshCommand`（正斜杠密钥路径）
    - 仓库：https://github.com/w504715799-eng/RemoteSensing--001（master 分支）
+6. 服务器执行序（进行中）：
+   - ai4rs 源码：本机 codeload 下载（12.2MB，Git 自带 OpenSSL curl；系统 curl 因 schannel 无凭据失败）→ scp 上传并解包
+   - **GPU 占用处理**：旧项目训练进程（`yolo-g2-strong-baseline-002` 的 train_publication_strong.py × 2 组）占用 95% 显存 18.6GB → 按“完全重新开始”指令 `kill` 两组父进程，GPU 已释放（0%）；
+     其守护脚本 `watch_strong_baseline.py` 经查为**只读诊断**（只写 live-status.json/ATTENTION.md，不会重启训练），保留不动；crontab/systemd 无自启项
+   - conda 环境：`repo.anaconda.com` 需要 ToS 交互 → 脚本改用清华镜像 channel（`--override-channels`，无 ToS），已重新启动并在后台安装（torch 2.4.0 797MB 下载中）
+   - 评测管线修正：O2-RTDETR 官方配置用 mmrotate `DOTADataset`+`DOTAMetric` **直接读 txt annfiles**（无需 COCO json）；04 脚本改为生成 val 覆盖配置 + `data` 软链
 
 **关键结论（防局部陷阱）**
 - 先拿官方权重基线（不训练）→ 再排实验矩阵一次性跑 → 组合增益判据（E1 vs E0' 同协议 +0.5 AP50）

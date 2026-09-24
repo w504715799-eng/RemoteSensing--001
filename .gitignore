@@ -20,5 +20,6 @@ work_dirs/
 
 # 上传打包
 ai4rs.tar.gz
+stage/
 *.log.html
 .DS_Store

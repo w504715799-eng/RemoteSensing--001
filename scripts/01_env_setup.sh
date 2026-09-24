@@ -19,8 +19,12 @@ PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 mkdir -p "$REPRO"/{logs,experiments,data,weights,envs}
 
 echo "==> [1/6] 创建 conda 环境 python=3.10 (ai4rs 官方要求)"
+# 用清华镜像 channel(--override-channels), 避免 repo.anaconda.com 的 ToS 交互阻塞
 if [ ! -d "$ENV_PREFIX" ]; then
-  conda create -p "$ENV_PREFIX" python=3.10 -y
+  conda create -p "$ENV_PREFIX" python=3.10 -y --override-channels \
+    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main \
+    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/r \
+    -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge
 fi
 source /opt/conda/etc/profile.d/conda.sh
 conda activate "$ENV_PREFIX"
@@ -43,7 +47,10 @@ mim install "mmsegmentation>=1.2.2" -i "$PIP_INDEX"
 
 echo "==> [4/6] 解包并安装 ai4rs"
 if [ ! -d "$REPRO/ai4rs" ]; then
-  cd "$REPRO" && tar xzf ai4rs.tar.gz
+  cd "$REPRO"
+  tar xzf ai4rs.tar.gz
+  # codeload tarball 解出的是 ai4rs-main/, git archive 则是 ai4rs/
+  [ -d ai4rs-main ] && mv ai4rs-main ai4rs
 fi
 cd "$REPRO/ai4rs"
 pip install -v -e . -i "$PIP_INDEX"
